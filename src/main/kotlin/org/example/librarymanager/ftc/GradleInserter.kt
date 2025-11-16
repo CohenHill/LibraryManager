@@ -5,6 +5,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.application.ApplicationManager
 
 object GradleInserter {
 
@@ -258,14 +259,17 @@ object GradleInserter {
     }
 
     fun getInstalledDependencies(project: Project): List<String> {
-        val file = findDependenciesFile(project) ?: return emptyList()
-        val doc = FileDocumentManager.getInstance().getDocument(file) ?: return emptyList()
+        // Ensure read-access when touching FileDocumentManager/VirtualFile
+        return ApplicationManager.getApplication().runReadAction<List<String>> {
+            val file = findDependenciesFile(project) ?: return@runReadAction emptyList()
+            val doc = FileDocumentManager.getInstance().getDocument(file) ?: return@runReadAction emptyList()
 
-        val implementationRegex = Regex("""implementation\s+["']([^"']+)["']""")
-        return doc.text.lines()
-            .mapNotNull { line ->
-                implementationRegex.find(line)?.groupValues?.getOrNull(1)
-            }
-            .filter { it.isNotBlank() }
+            val implementationRegex = Regex("""implementation\s+["']([^"']+)["']""")
+            doc.text.lines()
+                .mapNotNull { line ->
+                    implementationRegex.find(line)?.groupValues?.getOrNull(1)
+                }
+                .filter { it.isNotBlank() }
+        }
     }
 }

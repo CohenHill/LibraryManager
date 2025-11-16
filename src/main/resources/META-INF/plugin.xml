@@ -1,43 +1,23 @@
-<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
-    <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
-    <id>org.example.LibraryManager</id>
+    <id>org.example.librarymanager</id>
+    <name>Library Manager</name>
+    <version>1.0.0</version>
 
-    <!-- Public plugin name should be written in Title Case.
-         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
-    <name>LibraryManager</name>
+    <vendor email="example@example.com">Example</vendor>
 
-    <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
-    <vendor email="cohenphill@outlook.com">Cohen</vendor>
+    <description>
+        Plugin providing quickstart insertion for FTC libraries.
+    </description>
 
-    <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
-         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
-    <description><![CDATA[
-        <b>Manage FTC libraries and vendor dependencies from a dedicated tool window.</b><br><br>
-        LibraryManager helps FIRST Tech Challenge teams discover, add, and update dependencies (e.g., FTCLib, Road Runner, vendor SDKs) without manually editing Gradle files.
-        <ul>
-            <li>Browse available libraries and versions</li>
-            <li>Add, update, or remove dependencies with one click</li>
-            <li>Trigger Gradle sync and project refresh automatically</li>
-            <li>Per-project configuration and version pinning</li>
-            <li>Quick links to documentation and release notes</li>
-        </ul>
-        Works with Gradle-based FTC projects. Open via: View → Tool Windows → FTCLibManager.
-    ]]></description>
-
-
-    <!-- Product and plugin compatibility requirements.
-         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
     <depends>com.intellij.modules.platform</depends>
 
-
-    <!-- Extension points defined by the plugin.
-         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
-    <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="FTCLibManager"
-                    anchor="right"
-                    factoryClass="org.example.librarymanager.ftc.FTCLibToolWindowFactory"
-                    icon="/icons/ftc.svg"/>
-    </extensions>
-
+    <actions>
+        <action
+                id="org.example.librarymanager.ftc.InsertQuickstartAction"
+                class="org.example.librarymanager.ftc.InsertQuickstartAction"
+                text="Insert Quickstart Code"
+                description="Insert FTC library quickstart templates">
+            <add-to-group group-id="NewGroup" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>
