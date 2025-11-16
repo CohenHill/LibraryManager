@@ -45,6 +45,14 @@ object LibraryRegistry {
             description = "Real-time debugging and telemetry tool with graphing. Docs: https://acmerobotics.github.io/ftc-dashboard/"
         )
 
+        map["SlothDash"] = LibrarySource(
+            group = "com.acmerobotics.slothboard",
+            artifact = "dashboard",
+            repoUrl = "https://repo.dairy.foundation/releases",
+            repositories = dairyRepos,
+            description = "Sloth-compatible dashboard (replaces FTC Dashboard when using Sloth from Dairy Suite). Docs: https://docs.dairy.foundation/"
+        )
+
         map["FTCLib Core"] = LibrarySource(
             group = "com.github.FTCLib",
             artifact = "FTCLib",

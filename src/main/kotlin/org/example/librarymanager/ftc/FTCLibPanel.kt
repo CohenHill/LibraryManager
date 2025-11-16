@@ -1,23 +1,20 @@
 package org.example.librarymanager.ftc
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.JBColor
 import java.awt.*
 import java.net.URI
 import javax.swing.*
-import java.awt.event.ComponentAdapter
-import java.awt.event.ComponentEvent
 import javax.swing.border.EmptyBorder
 import javax.swing.event.DocumentListener
-import javax.swing.event.HyperlinkEvent
 
 class FTCLibPanel(private val project: Project) : JPanel() {
 
-    // CHANGED: use GridBagLayout for mainPanel to eliminate left/right cutoff
     private val mainPanel = JPanel(GridBagLayout())
     private var searchQuery = ""
 
-    // Modern color scheme
     private val primaryColor = JBColor(Color(0x007ACC), Color(0x0098FF))
     private val successColor = JBColor(Color(0x28A745), Color(0x2EA043))
     private val dangerColor = JBColor(Color(0xDC3545), Color(0xF85149))
@@ -25,21 +22,18 @@ class FTCLibPanel(private val project: Project) : JPanel() {
     private val cardBackground = JBColor(Color(0xF5F5F5), Color(0x2B2B2B))
     private val borderColor = JBColor(Color(0xE0E0E0), Color(0x3C3C3C))
 
-    // Simplified: only keep a plain searchField
     private val searchField = JTextField()
+    private var hasUpdatesAvailable = false
 
     init {
         layout = BorderLayout()
         background = JBColor.background()
-        // FIX: reduce horizontal border to prevent right cutoff
         border = EmptyBorder(16, 8, 16, 8)
 
-        // Modern header with search bar
         val headerPanel = JPanel(BorderLayout())
         headerPanel.background = JBColor.background()
         headerPanel.border = EmptyBorder(0, 0, 16, 0)
 
-        // Search bar
         searchField.font = searchField.font.deriveFont(13f)
         searchField.border = BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(borderColor, 1),
@@ -57,7 +51,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
             }
         })
 
-        // Wrap search horizontally
         val searchWrapper = JPanel()
         searchWrapper.layout = BoxLayout(searchWrapper, BoxLayout.X_AXIS)
         searchWrapper.background = JBColor.background()
@@ -69,12 +62,10 @@ class FTCLibPanel(private val project: Project) : JPanel() {
             add(searchWrapper, BorderLayout.WEST)
         }
 
-        // Setup title + subtitle (unchanged)
         val titlePanel = JPanel()
         titlePanel.layout = BoxLayout(titlePanel, BoxLayout.Y_AXIS)
         titlePanel.background = JBColor.background()
 
-        // Title/subtitle now HTML for wrapping
         val title = JLabel("<html><b>FTC Library Manager</b></html>")
         title.font = title.font.deriveFont(22f).deriveFont(Font.BOLD)
         title.foreground = JBColor.foreground()
@@ -89,7 +80,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         titlePanel.add(Box.createVerticalStrut(4))
         titlePanel.add(subtitle)
 
-        // Assemble header content
         val headerContent = JPanel()
         headerContent.layout = BoxLayout(headerContent, BoxLayout.Y_AXIS)
         headerContent.background = JBColor.background()
@@ -99,16 +89,12 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         headerPanel.add(headerContent, BorderLayout.WEST)
         add(headerPanel, BorderLayout.NORTH)
 
-        // Setup main scrollable panel
         val scrollPane = JScrollPane(mainPanel)
         scrollPane.border = EmptyBorder(0, 0, 0, 0)
         scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
-
-        // REPLACED broken custom wheel handler with native faster scrolling
         scrollPane.verticalScrollBar.unitIncrement = 32
         scrollPane.verticalScrollBar.blockIncrement = 160
         scrollPane.viewport.scrollMode = JViewport.SIMPLE_SCROLL_MODE
-        // (Removed previous addMouseWheelListener that consumed events)
 
         add(scrollPane, BorderLayout.CENTER)
         refreshUI()
@@ -116,6 +102,8 @@ class FTCLibPanel(private val project: Project) : JPanel() {
 
     private fun refreshUI() {
         mainPanel.removeAll()
+        hasUpdatesAvailable = false
+
         val c = GridBagConstraints().apply {
             gridx = 0
             weightx = 1.0
@@ -128,6 +116,12 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         val installedPrefixes = installedDeps.map { it.substringBeforeLast(":") }.toSet()
         val rawLibraries = LibraryRegistry.LIBRARIES
 
+        val hasAnyIncompatibility = rawLibraries.keys.any { libName ->
+            getIncompatibilitiesFor(libName, installedPrefixes).isNotEmpty()
+        }
+
+        updateToolWindowIcon(hasAnyIncompatibility, hasUpdatesAvailable)
+
         val filtered = if (searchQuery.isBlank()) rawLibraries else {
             rawLibraries.filter { (n, s) ->
                 n.contains(searchQuery, true) ||
@@ -138,41 +132,64 @@ class FTCLibPanel(private val project: Project) : JPanel() {
             }
         }
 
-        val installedEntries = filtered.filter { (_, src) ->
-            when {
-                src.subArtifactCoordinates.isNotEmpty() ->
-                    src.subArtifactCoordinates.any { installedPrefixes.contains(it) }
-                src.subArtifacts.isNotEmpty() ->
-                    src.subArtifacts.any { installedPrefixes.contains("${src.group}:$it") }
-                else -> installedPrefixes.contains("${src.group}:${src.artifact}")
+        val installedCards = mutableListOf<Pair<String, JPanel>>()
+
+        filtered.forEach { (name, src) ->
+            if (src.subArtifactCoordinates.isNotEmpty()) {
+                src.subArtifactCoordinates.forEach { coord ->
+                    if (installedPrefixes.contains(coord)) {
+                        val version = installedDeps.firstOrNull { it.startsWith("$coord:") }?.substringAfterLast(":")
+                        val (g, a) = coord.split(":")
+                        val displayName = when {
+                            name == "Dairy Suite" -> "Dairy ${formatArtifactName(a)}"
+                            name == "NextFTC Suite" -> "NextFTC ${formatArtifactName(a)}"
+                            else -> "${name} ${formatArtifactName(a)}"
+                        }
+                        val tempSrc = src.copy(group = g, artifact = a)
+                        val card = makeInstalledCard(displayName, tempSrc, version, parentSuite = name)
+                        installedCards.add(displayName to card)
+                    }
+                }
+            } else if (src.subArtifacts.isNotEmpty()) {
+                src.subArtifacts.forEach { a ->
+                    val prefix = "${src.group}:$a"
+                    if (installedPrefixes.contains(prefix)) {
+                        val version = installedDeps.firstOrNull { it.startsWith("$prefix:") }?.substringAfterLast(":")
+                        val displayName = if (name == "Panels Library") {
+                            "Panels ${formatArtifactName(a)}"
+                        } else {
+                            "$name ${formatArtifactName(a)}"
+                        }
+                        val tempSrc = src.copy(artifact = a)
+                        val card = makeInstalledCard(displayName, tempSrc, version, parentSuite = name)
+                        installedCards.add(displayName to card)
+                    }
+                }
+            } else {
+                if (installedPrefixes.contains("${src.group}:${src.artifact}")) {
+                    val version = installedDeps.firstOrNull { it.startsWith("${src.group}:${src.artifact}:") }?.substringAfterLast(":")
+                    val card = makeInstalledCard(name, src, version)
+                    installedCards.add(name to card)
+                }
             }
         }
 
-        // Installed header
         c.gridy = 0
-        mainPanel.add(createSectionHeader("Installed", installedEntries.size), c)
+        mainPanel.add(createSectionHeader("Installed", installedCards.size), c)
         c.gridy++
         mainPanel.add(Box.createVerticalStrut(8), c); c.gridy++
 
-        if (installedEntries.isEmpty()) {
+        if (installedCards.isEmpty()) {
             mainPanel.add(createEmptyState("No libraries installed", "Install from the Available section below"), c)
             c.gridy++
             mainPanel.add(Box.createVerticalStrut(16), c); c.gridy++
         } else {
-            installedEntries.forEach { (name, src) ->
-                val version = if (src.subArtifactCoordinates.isNotEmpty()) {
-                    val coord = src.subArtifactCoordinates.firstOrNull { installedPrefixes.contains(it) }
-                    coord?.let { installedDeps.firstOrNull { dep -> dep.startsWith("$it:") }?.substringAfterLast(":") }
-                } else {
-                    installedDeps.firstOrNull { it.startsWith("${src.group}:${src.artifact}:") }?.substringAfterLast(":")
-                }
-                val card = makeInstalledCard(name, src, version)
+            installedCards.sortedBy { it.first }.forEach { (_, card) ->
                 mainPanel.add(card, c); c.gridy++
                 mainPanel.add(Box.createVerticalStrut(12), c); c.gridy++
             }
         }
 
-        // Available header
         val availableEntries = filtered.filter { (name, src) ->
             if (name == "SolversLib Pedro Pathing") {
                 val pedroInstalled = installedPrefixes.any { it.startsWith("com.pedropathing:ftc") }
@@ -202,7 +219,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
             }
         }
 
-        // Push top
         c.weighty = 1.0
         mainPanel.add(Box.createVerticalGlue(), c)
 
@@ -210,8 +226,64 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         mainPanel.repaint()
     }
 
+    private fun formatArtifactName(artifact: String): String {
+        return when (artifact.lowercase()) {
+            "core" -> "Core"
+            "mercurial" -> "Mercurial"
+            "pasteurized" -> "Pasteurized"
+            "sinister" -> "Sinister"
+            "sloth" -> "Sloth"
+            "util" -> "Util"
+            "ftc" -> "Core"
+            "hardware" -> "Hardware"
+            "control" -> "Control"
+            "bindings" -> "Bindings"
+            "pedro" -> "Pedro Extension"
+            "roadrunner" -> "Road Runner Extension"
+            "fateweaver" -> "FateWeaver Extension"
+            "fullpanels" -> "Full Bundle"
+            "battery" -> "Battery"
+            "camerastream" -> "Camera Stream"
+            "capture" -> "Capture"
+            "configurables" -> "Configurables"
+            "field" -> "Field"
+            "gamepad" -> "Gamepad"
+            "graph" -> "Graph"
+            "lights" -> "Lights"
+            "limelightproxy" -> "Limelight Proxy"
+            "opmodecontrol" -> "OpMode Control"
+            "pinger" -> "Pinger"
+            "telemetry" -> "Telemetry"
+            "themes" -> "Themes"
+            "utils" -> "Utils"
+            "dashboard" -> "Dashboard"
+            else -> artifact.split("-", "_").joinToString(" ") {
+                it.replaceFirstChar { c -> c.uppercase() }
+            }
+        }
+    }
+
+    private fun updateToolWindowIcon(hasIncompatibility: Boolean, hasUpdates: Boolean) {
+        SwingUtilities.invokeLater {
+            val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("FTCLibManager")
+            if (toolWindow != null) {
+                val iconPath = when {
+                    hasIncompatibility -> "/icons/ftcWarning.svg"
+                    hasUpdates -> "/icons/ftcUpdate.svg"
+                    else -> "/icons/ftc.svg"
+                }
+                try {
+                    val icon = com.intellij.openapi.util.IconLoader.getIcon(iconPath, javaClass)
+                    toolWindow.setIcon(icon)
+                } catch (e: Exception) {
+                    println("Failed to load icon: $iconPath")
+                }
+            }
+        }
+    }
+
     private fun makeAvailableCard(name: String, src: LibrarySource, installedPrefixes: Set<String>): JPanel {
-        val header = JLabel(name) // REMOVED HTML wrapper
+        val header = JLabel(name)
         header.font = header.font.deriveFont(Font.BOLD, 14f)
         header.alignmentX = Component.LEFT_ALIGNMENT
 
@@ -306,6 +378,17 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         content.add(header)
         content.add(Box.createVerticalStrut(6))
         content.add(descComponent)
+
+        createIncompatibilitiesRow(name, installedPrefixes)?.let {
+            content.add(Box.createVerticalStrut(8))
+            content.add(it)
+        }
+
+        createSuggestionsRow(name, installedPrefixes)?.let {
+            content.add(Box.createVerticalStrut(8))
+            content.add(it)
+        }
+
         content.add(Box.createVerticalStrut(10))
         if (artifactSelector != null) {
             content.add(createRow("Module:", artifactSelector))
@@ -317,30 +400,15 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         return card
     }
 
-    private fun makeInstalledCard(name: String, src: LibrarySource, currentVersion: String?): JPanel {
+    private fun makeInstalledCard(name: String, src: LibrarySource, currentVersion: String?, parentSuite: String? = null): JPanel {
         val card = createCard()
-
-        val multiModuleVersions: Map<String, String> = if (name == "Pedro Pathing" && src.subArtifacts.isNotEmpty()) {
-            val installed = GradleInserter.getInstalledDependencies(project)
-            src.subArtifacts.associateWith { module ->
-                installed.firstOrNull { it.startsWith("${src.group}:$module:") }
-                    ?.substringAfterLast(":") ?: "—"
-            }
-        } else emptyMap()
 
         val header = JLabel(name).apply {
             font = font.deriveFont(Font.BOLD, 14f)
             alignmentX = Component.LEFT_ALIGNMENT
         }
 
-        val versionBadgeText = if (multiModuleVersions.isNotEmpty()) {
-            // Show primary module (ftc) version; if telemetry differs, indicate mixed
-            val ftcV = multiModuleVersions["ftc"] ?: "—"
-            val teleV = multiModuleVersions["telemetry"] ?: "—"
-            if (ftcV == teleV || teleV == "—") "v$ftcV" else "ftc $ftcV / telemetry $teleV"
-        } else "v$currentVersion"
-
-        val versionBadge = JLabel(" $versionBadgeText ").apply {
+        val versionBadge = JLabel(" v$currentVersion ").apply {
             font = font.deriveFont(Font.BOLD, 11f)
             foreground = Color.WHITE
             background = successColor
@@ -351,15 +419,43 @@ class FTCLibPanel(private val project: Project) : JPanel() {
 
         val descComponent = createDescription(src.description)
 
+        val installedPrefixes = GradleInserter.getInstalledDependencies(project)
+            .map { it.substringBeforeLast(":") }
+            .toSet()
+
         val updateButton = createButton("Update", warningColor)
         val deleteButton = createButton("Remove", dangerColor)
+
+        Thread {
+            try {
+                val versions = VersionFetcher.fetchVersions(src)
+                if (versions.isNotEmpty()) {
+                    val latest = versions.last()
+
+                    if (latest != currentVersion) {
+                        SwingUtilities.invokeLater {
+                            hasUpdatesAvailable = true
+                            val installedDeps = ApplicationManager.getApplication().runReadAction<List<String>> {
+                                GradleInserter.getInstalledDependencies(project)
+                            }
+                            val installedPrefixes = installedDeps.map { it.substringBeforeLast(":") }.toSet()
+                            val hasAnyIncompatibility = LibraryRegistry.LIBRARIES.keys.any { libName ->
+                                getIncompatibilitiesFor(libName, installedPrefixes).isNotEmpty()
+                            }
+                            updateToolWindowIcon(hasAnyIncompatibility, hasUpdatesAvailable)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Silent fail for background check
+            }
+        }.start()
 
         updateButton.addActionListener {
             updateButton.isEnabled = false
             updateButton.text = "Checking..."
             Thread {
-                val baseSource = if (name == "Pedro Pathing") src.copy(artifact = "ftc") else src
-                val versions = VersionFetcher.fetchVersions(baseSource)
+                val versions = VersionFetcher.fetchVersions(src)
                 if (versions.isEmpty()) {
                     SwingUtilities.invokeLater {
                         updateButton.isEnabled = true
@@ -370,24 +466,11 @@ class FTCLibPanel(private val project: Project) : JPanel() {
                 }
                 val latest = versions.last()
                 SwingUtilities.invokeLater {
-                    if (name == "Pedro Pathing" && multiModuleVersions.isNotEmpty()) {
-                        val currentFtc = multiModuleVersions["ftc"]
-                        if (currentFtc == latest) {
-                            showInfoMessage("$name is already at latest ($latest)")
-                        } else {
-                            // Update both modules to same latest version
-                            src.subArtifacts.forEach { mod ->
-                                GradleInserter.insertDependency(project, "${src.group}:$mod:$latest", src.repositories)
-                            }
-                            showSuccessMessage("$name modules updated to $latest")
-                        }
+                    if (latest == currentVersion) {
+                        showInfoMessage("$name is already at latest ($latest)")
                     } else {
-                        if (latest == currentVersion) {
-                            showInfoMessage("$name is already at latest ($latest)")
-                        } else {
-                            GradleInserter.insertDependency(project, "${src.group}:${src.artifact}:$latest", src.repositories)
-                            showSuccessMessage("$name updated to $latest")
-                        }
+                        GradleInserter.insertDependency(project, "${src.group}:${src.artifact}:$latest", src.repositories)
+                        showSuccessMessage("$name updated to $latest")
                     }
                     updateButton.isEnabled = true
                     updateButton.text = "Update"
@@ -405,15 +488,8 @@ class FTCLibPanel(private val project: Project) : JPanel() {
                 JOptionPane.WARNING_MESSAGE
             )
             if (confirm == JOptionPane.YES_OPTION) {
-                if (name == "Pedro Pathing" && src.subArtifacts.isNotEmpty()) {
-                    src.subArtifacts.forEach { mod ->
-                        GradleInserter.deleteDependency(project, "${src.group}:$mod")
-                    }
-                    showSuccessMessage("$name modules removed")
-                } else {
-                    GradleInserter.deleteDependency(project, "${src.group}:${src.artifact}")
-                    showSuccessMessage("$name removed")
-                }
+                GradleInserter.deleteDependency(project, "${src.group}:${src.artifact}")
+                showSuccessMessage("$name removed")
                 refreshUI()
             }
         }
@@ -427,14 +503,15 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         content.add(Box.createVerticalStrut(8))
         content.add(descComponent)
 
-        if (multiModuleVersions.isNotEmpty()) {
-            val modulesLabel = JLabel(
-                "<html><i>Modules:</i> ftc (${multiModuleVersions["ftc"]}), telemetry (${multiModuleVersions["telemetry"]})</html>"
-            )
-            modulesLabel.font = modulesLabel.font.deriveFont(11f)
-            modulesLabel.foreground = JBColor.GRAY
-            content.add(Box.createVerticalStrut(6))
-            content.add(modulesLabel)
+        val checkName = parentSuite ?: name
+        createIncompatibilitiesRow(checkName, installedPrefixes)?.let {
+            content.add(Box.createVerticalStrut(8))
+            content.add(it)
+        }
+
+        createSuggestionsRow(checkName, installedPrefixes)?.let {
+            content.add(Box.createVerticalStrut(8))
+            content.add(it)
         }
 
         content.add(Box.createVerticalStrut(12))
@@ -444,7 +521,300 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         return card
     }
 
-    // NEW: simplified stable description without HTML width tricks; wraps fully
+    private fun getSuggestionsFor(libName: String): List<String> = when (libName) {
+        "Pedro Pathing" -> listOf("Panels Library", "FTC Dashboard")
+        "Road Runner Core" -> listOf("FTC Dashboard")
+        "Hermes", "Koala Log" -> listOf("FTC Dashboard")
+        else -> emptyList()
+    }
+
+    private fun isInstalled(src: LibrarySource, installedPrefixes: Set<String>): Boolean {
+        return when {
+            src.subArtifactCoordinates.isNotEmpty() ->
+                src.subArtifactCoordinates.any { installedPrefixes.contains(it) }
+            src.subArtifacts.isNotEmpty() ->
+                src.subArtifacts.any { installedPrefixes.contains("${src.group}:$it") }
+            else -> installedPrefixes.contains("${src.group}:${src.artifact}")
+        }
+    }
+
+    private fun createSuggestionsRow(forName: String, installedPrefixes: Set<String>): JComponent? {
+        val staticItems = getSuggestionsFor(forName)
+            .mapNotNull { n -> LibraryRegistry.LIBRARIES[n]?.let { n to it } }
+            .filter { (_, src) -> !isInstalled(src, installedPrefixes) }
+            .toMutableList()
+
+        val dynamic = mutableListOf<Pair<String, LibrarySource>>()
+
+        val hasNextFTCCore = installedPrefixes.contains("dev.nextftc:ftc")
+        val hasPedro = installedPrefixes.contains("com.pedropathing:ftc") || installedPrefixes.contains("com.pedropathing:telemetry")
+        val hasRR = installedPrefixes.contains("com.github.acmerobotics:road-runner")
+        val hasFate = installedPrefixes.contains("gay.zharel.fateweaver:ftc")
+
+        val hasNextPedroExt = installedPrefixes.contains("dev.nextftc.extensions:pedro")
+        val hasNextRRExt = installedPrefixes.contains("dev.nextftc.extensions:roadrunner")
+        val hasNextFateExt = installedPrefixes.contains("dev.nextftc.extensions:fateweaver")
+
+        val hasSolversCore = installedPrefixes.contains("org.solverslib:core")
+        val hasSolversPedro = installedPrefixes.contains("org.solverslib:pedroPathing")
+
+        if (hasNextFTCCore && !hasNextPedroExt && (forName == "Pedro Pathing" || forName == "NextFTC Suite") && hasPedro) {
+            dynamic += "NextFTC Pedro Extension" to LibrarySource(
+                group = "dev.nextftc.extensions",
+                artifact = "pedro",
+                repoUrl = "https://repo1.maven.org/maven2",
+                repositories = emptyList(),
+                description = "NextFTC extension for Pedro Pathing"
+            )
+        }
+        if (hasNextFTCCore && !hasNextRRExt && (forName == "Road Runner Core" || forName == "NextFTC Suite") && hasRR) {
+            dynamic += "NextFTC Road Runner Extension" to LibrarySource(
+                group = "dev.nextftc.extensions",
+                artifact = "roadrunner",
+                repoUrl = "https://repo1.maven.org/maven2",
+                repositories = emptyList(),
+                description = "NextFTC extension for Road Runner"
+            )
+        }
+        if (hasNextFTCCore && !hasNextFateExt && (forName == "FateWeaver" || forName == "NextFTC Suite") && hasFate) {
+            dynamic += "NextFTC FateWeaver Extension" to LibrarySource(
+                group = "dev.nextftc.extensions",
+                artifact = "fateweaver",
+                repoUrl = "https://repo1.maven.org/maven2",
+                repositories = emptyList(),
+                description = "NextFTC extension for FateWeaver"
+            )
+        }
+
+        if (!hasSolversPedro && hasPedro && hasSolversCore && (forName == "Pedro Pathing" || forName == "SolversLib Core")) {
+            LibraryRegistry.LIBRARIES["SolversLib Pedro Pathing"]?.let { src ->
+                if (!isInstalled(src, installedPrefixes)) {
+                    dynamic += "SolversLib Pedro Pathing" to src
+                }
+            }
+        }
+
+        val items = (staticItems + dynamic)
+        if (items.isEmpty()) return null
+
+        val row = JPanel()
+        row.layout = BoxLayout(row, BoxLayout.X_AXIS)
+        row.background = cardBackground
+
+        val lbl = JLabel("Suggested:")
+        lbl.font = lbl.font.deriveFont(Font.BOLD, 12f)
+        row.add(lbl)
+        row.add(Box.createHorizontalStrut(8))
+
+        items.forEachIndexed { idx, (name, src) ->
+            val btn = JButton(name).apply {
+                isFocusPainted = false
+                font = font.deriveFont(11f).deriveFont(Font.BOLD)
+                background = primaryColor
+                foreground = Color.WHITE
+                border = BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(primaryColor.darker(), 1, true),
+                    EmptyBorder(4, 10, 4, 10)
+                )
+                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                addActionListener {
+                    isEnabled = false
+                    text = "Installing..."
+                    Thread {
+                        try {
+                            val (g, a) = when {
+                                src.group == "com.bylazar" && (src.subArtifacts.contains("fullpanels") || src.artifact == "fullpanels") ->
+                                    src.group to "fullpanels"
+                                else -> src.group to src.artifact
+                            }
+                            val effective = src.copy(group = g, artifact = a)
+                            val versions = VersionFetcher.fetchVersions(effective)
+                            val latest = versions.lastOrNull()
+                            if (latest == null) {
+                                SwingUtilities.invokeLater {
+                                    text = name
+                                    isEnabled = true
+                                    showErrorMessage("No versions found for $name")
+                                }
+                            } else {
+                                GradleInserter.insertDependency(project, "$g:$a:$latest", src.repositories)
+                                SwingUtilities.invokeLater {
+                                    showSuccessMessage("$name $latest installed")
+                                    refreshUI()
+                                }
+                            }
+                        } catch (_: Exception) {
+                            SwingUtilities.invokeLater {
+                                text = name
+                                isEnabled = true
+                                showErrorMessage("Failed to install $name")
+                            }
+                        }
+                    }.start()
+                }
+            }
+            row.add(btn)
+            if (idx != items.lastIndex) row.add(Box.createHorizontalStrut(6))
+        }
+        row.alignmentX = Component.LEFT_ALIGNMENT
+        return row
+    }
+
+    private fun getIncompatibilitiesFor(libName: String, installedPrefixes: Set<String>): List<Incompatibility> {
+        if (libName != "Dairy Suite" && !installedPrefixes.contains("dev.frozenmilk.sinister:Sloth")) {
+            return emptyList()
+        }
+
+        val hasSloth = installedPrefixes.contains("dev.frozenmilk.sinister:Sloth")
+        val hasFTCDash = installedPrefixes.contains("com.github.acmerobotics:ftc-dashboard")
+        val hasPanels = installedPrefixes.any { it.startsWith("com.bylazar:") }
+
+        val conflicts = mutableListOf<Incompatibility>()
+
+        if (hasSloth && hasFTCDash && (libName == "Dairy Suite" || libName == "FTC Dashboard")) {
+            conflicts.add(Incompatibility(
+                conflictingLib = if (libName == "Dairy Suite") "FTC Dashboard" else "Sloth (from Dairy Suite)",
+                reason = "Sloth and FTC Dashboard cannot be used together",
+                suggestedFix = "SlothDash"
+            ))
+        }
+
+        if (hasSloth && hasPanels && (libName == "Dairy Suite" || libName == "Panels Library")) {
+            conflicts.add(Incompatibility(
+                conflictingLib = if (libName == "Dairy Suite") "Panels Library" else "Sloth (from Dairy Suite)",
+                reason = "Sloth and Panels Library are incompatible",
+                suggestedFix = null
+            ))
+        }
+
+        return conflicts
+    }
+
+    data class Incompatibility(
+        val conflictingLib: String,
+        val reason: String,
+        val suggestedFix: String?
+    )
+
+    private fun createIncompatibilitiesRow(forName: String, installedPrefixes: Set<String>): JComponent? {
+        val conflicts = getIncompatibilitiesFor(forName, installedPrefixes)
+        if (conflicts.isEmpty()) return null
+
+        val panel = Box.createVerticalBox()
+        panel.alignmentX = Component.LEFT_ALIGNMENT
+
+        val headerRow = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
+            background = cardBackground
+
+            val warningIcon = JLabel("⚠️")
+            warningIcon.font = warningIcon.font.deriveFont(14f)
+
+            val lbl = JLabel(" Incompatible:")
+            lbl.font = lbl.font.deriveFont(Font.BOLD, 12f)
+            lbl.foreground = dangerColor
+
+            add(warningIcon)
+            add(lbl)
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        panel.add(headerRow)
+        panel.add(Box.createVerticalStrut(6))
+
+        conflicts.forEach { conflict ->
+            val conflictPanel = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                background = JBColor(Color(0xFFF3CD), Color(0x3D2800))
+                border = BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(warningColor, 2),
+                    EmptyBorder(8, 10, 8, 10)
+                )
+                alignmentX = Component.LEFT_ALIGNMENT
+            }
+
+            val conflictLabel = JLabel("⚠ ${conflict.reason}")
+            conflictLabel.font = conflictLabel.font.deriveFont(Font.BOLD, 11f)
+            conflictLabel.foreground = JBColor(Color(0x856404), Color(0xFFD700))
+            conflictLabel.alignmentX = Component.LEFT_ALIGNMENT
+
+            val detailLabel = JLabel("Conflicts with: ${conflict.conflictingLib}")
+            detailLabel.font = detailLabel.font.deriveFont(11f)
+            detailLabel.foreground = JBColor.GRAY
+            detailLabel.alignmentX = Component.LEFT_ALIGNMENT
+
+            conflictPanel.add(conflictLabel)
+            conflictPanel.add(Box.createVerticalStrut(4))
+            conflictPanel.add(detailLabel)
+
+            if (conflict.suggestedFix != null) {
+                conflictPanel.add(Box.createVerticalStrut(6))
+                val fixButton = JButton("Install ${conflict.suggestedFix}").apply {
+                    isFocusPainted = false
+                    font = font.deriveFont(11f).deriveFont(Font.BOLD)
+                    background = successColor
+                    foreground = Color.WHITE
+                    border = BorderFactory.createCompoundBorder(
+                        BorderFactory.createLineBorder(successColor.darker(), 1, true),
+                        EmptyBorder(4, 10, 4, 10)
+                    )
+                    cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    addActionListener {
+                        isEnabled = false
+                        text = "Installing..."
+                        Thread {
+                            try {
+                                val slothDashSrc = LibraryRegistry.LIBRARIES[conflict.suggestedFix]
+                                if (slothDashSrc != null) {
+                                    GradleInserter.deleteDependency(project, "com.github.acmerobotics:ftc-dashboard")
+
+                                    val versions = VersionFetcher.fetchVersions(slothDashSrc)
+                                    val latest = versions.lastOrNull()
+                                    if (latest != null) {
+                                        GradleInserter.insertDependency(
+                                            project,
+                                            "${slothDashSrc.group}:${slothDashSrc.artifact}:$latest",
+                                            slothDashSrc.repositories
+                                        )
+                                        SwingUtilities.invokeLater {
+                                            showSuccessMessage("${conflict.suggestedFix} $latest installed (FTC Dashboard removed)")
+                                            refreshUI()
+                                        }
+                                    } else {
+                                        SwingUtilities.invokeLater {
+                                            text = "Install ${conflict.suggestedFix}"
+                                            isEnabled = true
+                                            showErrorMessage("No versions found for ${conflict.suggestedFix}")
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                SwingUtilities.invokeLater {
+                                    text = "Install ${conflict.suggestedFix}"
+                                    isEnabled = true
+                                    showErrorMessage("Failed to install ${conflict.suggestedFix}")
+                                }
+                            }
+                        }.start()
+                    }
+                }
+                conflictPanel.add(fixButton)
+            } else {
+                conflictPanel.add(Box.createVerticalStrut(4))
+                val noFixLabel = JLabel("No automatic fix available. Manual resolution required.")
+                noFixLabel.font = noFixLabel.font.deriveFont(Font.ITALIC, 10f)
+                noFixLabel.foreground = JBColor.GRAY
+                noFixLabel.alignmentX = Component.LEFT_ALIGNMENT
+                conflictPanel.add(noFixLabel)
+            }
+
+            panel.add(conflictPanel)
+            panel.add(Box.createVerticalStrut(6))
+        }
+
+        return panel
+    }
+
     private fun createDescription(text: String): JComponent {
         val urlRegex = Regex("""https?://\S+""")
         val urls = urlRegex.findAll(text).map { it.value.removeSuffix(".") }.toList()
@@ -494,7 +864,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         return panel
     }
 
-    // ADD: helper to create styled buttons
     private fun createButton(text: String, color: Color): JButton {
         return JButton(text).apply {
             isFocusPainted = false
@@ -509,7 +878,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         }
     }
 
-    // ADD: row without label
     private fun createRow(vararg components: Component): JPanel {
         val panel = JPanel()
         panel.layout = BoxLayout(panel, BoxLayout.X_AXIS)
@@ -522,7 +890,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         return panel
     }
 
-    // ADD: row with label
     private fun createRow(label: String, vararg components: Component): JPanel {
         val panel = JPanel()
         panel.layout = BoxLayout(panel, BoxLayout.X_AXIS)
@@ -539,7 +906,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         return panel
     }
 
-    // ADD: section header
     private fun createSectionHeader(text: String, count: Int): JPanel {
         val panel = JPanel(BorderLayout())
         panel.background = JBColor.background()
@@ -559,7 +925,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         return panel
     }
 
-    // ADD: empty state panel
     private fun createEmptyState(title: String, description: String): JPanel {
         val panel = JPanel()
         panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
@@ -576,7 +941,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         return panel
     }
 
-    // ADD: message helpers
     private fun showSuccessMessage(message: String) =
         JOptionPane.showMessageDialog(this, message, "Success", JOptionPane.INFORMATION_MESSAGE)
 
@@ -585,18 +949,4 @@ class FTCLibPanel(private val project: Project) : JPanel() {
 
     private fun showInfoMessage(message: String) =
         JOptionPane.showMessageDialog(this, message, "Info", JOptionPane.PLAIN_MESSAGE)
-
-    // ADDED: escapeHtml helper (was missing causing compile error)
-    private fun escapeHtml(s: String): String = buildString {
-        for (ch in s) {
-            when (ch) {
-                '<' -> append("&lt;")
-                '>' -> append("&gt;")
-                '&' -> append("&amp;")
-                '"' -> append("&quot;")
-                '\'' -> append("&#39;")
-                else -> append(ch)
-            }
-        }
-    }
 }

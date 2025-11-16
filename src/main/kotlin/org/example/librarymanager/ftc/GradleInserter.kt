@@ -122,8 +122,20 @@ object GradleInserter {
         val file = findDependenciesFile(project) ?: return
         WriteCommandAction.runWriteCommandAction(project) {
             val doc = FileDocumentManager.getInstance().getDocument(file) ?: return@runWriteCommandAction
+
+            // FIXED: Match exact prefix or full coordinate (e.g., "dev.frozenmilk.sinister:Sloth")
             val cleaned = doc.text.lines()
-                .filterNot { it.contains("implementation") && it.contains(prefix + ":") }
+                .filterNot { line ->
+                    if (!line.contains("implementation")) return@filterNot false
+
+                    // Extract the dependency string from the line
+                    val depMatch = Regex("""implementation\s+["']([^"']+)["']""").find(line)
+                    val dep = depMatch?.groupValues?.getOrNull(1) ?: return@filterNot false
+
+                    // Check if this dependency matches the prefix we want to delete
+                    // Either exact match of "group:artifact" or starts with "group:artifact:"
+                    dep == prefix || dep.startsWith("$prefix:")
+                }
                 .joinToString("\n")
             doc.setText(cleaned)
             FileDocumentManager.getInstance().saveDocument(doc)
