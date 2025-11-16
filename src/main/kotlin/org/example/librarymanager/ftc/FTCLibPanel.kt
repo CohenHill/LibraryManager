@@ -9,10 +9,15 @@ import java.net.URI
 import javax.swing.*
 import javax.swing.border.EmptyBorder
 import javax.swing.event.DocumentListener
+import java.awt.event.FocusAdapter
+import java.awt.event.FocusEvent
 
 class FTCLibPanel(private val project: Project) : JPanel() {
 
-    private val mainPanel = JPanel(GridBagLayout())
+    private val mainPanel = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        background = JBColor.background()
+    }
     private var searchQuery = ""
 
     private val primaryColor = JBColor(Color(0x007ACC), Color(0x0098FF))
@@ -24,6 +29,8 @@ class FTCLibPanel(private val project: Project) : JPanel() {
 
     private val searchField = JTextField()
     private var hasUpdatesAvailable = false
+    private val placeholderText = "Search libraries..."
+    private var showingPlaceholder = true
 
     init {
         layout = BorderLayout()
@@ -39,27 +46,50 @@ class FTCLibPanel(private val project: Project) : JPanel() {
             BorderFactory.createLineBorder(borderColor, 1),
             EmptyBorder(8, 12, 8, 12)
         )
-        searchField.maximumSize = Dimension(Int.MAX_VALUE, 36)
+        searchField.preferredSize = Dimension(300, 36)
+        searchField.minimumSize = Dimension(50, 36)
         searchField.toolTipText = "Search libraries..."
+
+        // Set initial placeholder
+        searchField.text = placeholderText
+        searchField.foreground = JBColor.GRAY
+        showingPlaceholder = true
+
+        // Add focus listener for placeholder behavior
+        searchField.addFocusListener(object : FocusAdapter() {
+            override fun focusGained(e: FocusEvent?) {
+                if (showingPlaceholder) {
+                    searchField.text = ""
+                    searchField.foreground = JBColor.foreground()
+                    showingPlaceholder = false
+                }
+            }
+
+            override fun focusLost(e: FocusEvent?) {
+                if (searchField.text.trim().isEmpty()) {
+                    searchField.text = placeholderText
+                    searchField.foreground = JBColor.GRAY
+                    showingPlaceholder = true
+                }
+            }
+        })
+
         searchField.document.addDocumentListener(object : DocumentListener {
             override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = onChange()
             override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = onChange()
             override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = onChange()
             private fun onChange() {
-                searchQuery = searchField.text.trim()
-                refreshUI()
+                if (!showingPlaceholder) {
+                    searchQuery = searchField.text.trim()
+                    refreshUI()
+                }
             }
         })
-
-        val searchWrapper = JPanel()
-        searchWrapper.layout = BoxLayout(searchWrapper, BoxLayout.X_AXIS)
-        searchWrapper.background = JBColor.background()
-        searchWrapper.add(searchField)
 
         val searchPanel = JPanel(BorderLayout()).apply {
             background = JBColor.background()
             border = EmptyBorder(12, 0, 0, 0)
-            add(searchWrapper, BorderLayout.WEST)
+            add(searchField, BorderLayout.CENTER)
         }
 
         val titlePanel = JPanel()
@@ -86,7 +116,7 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         headerContent.add(titlePanel)
         headerContent.add(searchPanel)
 
-        headerPanel.add(headerContent, BorderLayout.WEST)
+        headerPanel.add(headerContent, BorderLayout.CENTER)
         add(headerPanel, BorderLayout.NORTH)
 
         val scrollPane = JScrollPane(mainPanel)
@@ -103,14 +133,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
     private fun refreshUI() {
         mainPanel.removeAll()
         hasUpdatesAvailable = false
-
-        val c = GridBagConstraints().apply {
-            gridx = 0
-            weightx = 1.0
-            fill = GridBagConstraints.HORIZONTAL
-            anchor = GridBagConstraints.NORTHWEST
-            insets = Insets(0, 0, 0, 0)
-        }
 
         val installedDeps = GradleInserter.getInstalledDependencies(project)
         val installedPrefixes = installedDeps.map { it.substringBeforeLast(":") }.toSet()
@@ -174,19 +196,13 @@ class FTCLibPanel(private val project: Project) : JPanel() {
             }
         }
 
-        c.gridy = 0
-        mainPanel.add(createSectionHeader("Installed", installedCards.size), c)
-        c.gridy++
-        mainPanel.add(Box.createVerticalStrut(8), c); c.gridy++
-
-        if (installedCards.isEmpty()) {
-            mainPanel.add(createEmptyState("No libraries installed", "Install from the Available section below"), c)
-            c.gridy++
-            mainPanel.add(Box.createVerticalStrut(16), c); c.gridy++
-        } else {
-            installedCards.sortedBy { it.first }.forEach { (_, card) ->
-                mainPanel.add(card, c); c.gridy++
-                mainPanel.add(Box.createVerticalStrut(12), c); c.gridy++
+        addSection("Installed", installedCards.size) {
+            if (installedCards.isEmpty()) {
+                addEmptyState("No libraries installed", "Install from the Available section below")
+            } else {
+                installedCards.sortedBy { it.first }.forEach { (_, card) ->
+                    addCard(card)
+                }
             }
         }
 
@@ -204,26 +220,46 @@ class FTCLibPanel(private val project: Project) : JPanel() {
             }
         }
 
-        mainPanel.add(Box.createVerticalStrut(8), c); c.gridy++
-        mainPanel.add(createSectionHeader("Available", availableEntries.size), c); c.gridy++
-        mainPanel.add(Box.createVerticalStrut(8), c); c.gridy++
+        mainPanel.add(Box.createVerticalStrut(8))
 
-        if (availableEntries.isEmpty()) {
-            mainPanel.add(createEmptyState("No libraries available", "All are installed or filtered out"), c); c.gridy++
-            mainPanel.add(Box.createVerticalStrut(16), c); c.gridy++
-        } else {
-            availableEntries.forEach { (name, src) ->
-                val card = makeAvailableCard(name, src, installedPrefixes)
-                mainPanel.add(card, c); c.gridy++
-                mainPanel.add(Box.createVerticalStrut(12), c); c.gridy++
+        addSection("Available", availableEntries.size) {
+            if (availableEntries.isEmpty()) {
+                addEmptyState("No libraries available", "All are installed or filtered out")
+            } else {
+                availableEntries.forEach { (name, src) ->
+                    val card = makeAvailableCard(name, src, installedPrefixes)
+                    addCard(card)
+                }
             }
         }
 
-        c.weighty = 1.0
-        mainPanel.add(Box.createVerticalGlue(), c)
-
+        mainPanel.add(Box.createVerticalGlue())
         mainPanel.revalidate()
         mainPanel.repaint()
+    }
+
+    private fun addSection(title: String, count: Int, content: () -> Unit) {
+        val header = createSectionHeader(title, count)
+        header.alignmentX = Component.LEFT_ALIGNMENT
+        header.maximumSize = Dimension(Int.MAX_VALUE, header.preferredSize.height)
+        mainPanel.add(header)
+        mainPanel.add(Box.createVerticalStrut(8))
+        content()
+    }
+
+    private fun addCard(card: JPanel) {
+        card.alignmentX = Component.LEFT_ALIGNMENT
+        card.maximumSize = Dimension(Int.MAX_VALUE, card.preferredSize.height)
+        mainPanel.add(card)
+        mainPanel.add(Box.createVerticalStrut(12))
+    }
+
+    private fun addEmptyState(title: String, description: String) {
+        val emptyState = createEmptyState(title, description)
+        emptyState.alignmentX = Component.LEFT_ALIGNMENT
+        emptyState.maximumSize = Dimension(Int.MAX_VALUE, emptyState.preferredSize.height)
+        mainPanel.add(emptyState)
+        mainPanel.add(Box.createVerticalStrut(16))
     }
 
     private fun formatArtifactName(artifact: String): String {
@@ -283,11 +319,45 @@ class FTCLibPanel(private val project: Project) : JPanel() {
     }
 
     private fun makeAvailableCard(name: String, src: LibrarySource, installedPrefixes: Set<String>): JPanel {
-        val header = JLabel(name)
-        header.font = header.font.deriveFont(Font.BOLD, 14f)
-        header.alignmentX = Component.LEFT_ALIGNMENT
+        val card = JPanel().apply {
+            layout = BorderLayout(12, 12)
+            background = cardBackground
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(borderColor),
+                EmptyBorder(14, 14, 14, 14)
+            )
+        }
+
+        val contentPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            background = cardBackground
+            isOpaque = false
+        }
+
+        val header = JLabel(name).apply {
+            font = font.deriveFont(Font.BOLD, 14f)
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        contentPanel.add(header)
+        contentPanel.add(Box.createVerticalStrut(6))
 
         val descComponent = createDescription(src.description)
+        descComponent.alignmentX = Component.LEFT_ALIGNMENT
+        contentPanel.add(descComponent)
+
+        createIncompatibilitiesRow(name, installedPrefixes)?.let {
+            contentPanel.add(Box.createVerticalStrut(8))
+            it.alignmentX = Component.LEFT_ALIGNMENT
+            contentPanel.add(it)
+        }
+
+        createSuggestionsRow(name, installedPrefixes)?.let {
+            contentPanel.add(Box.createVerticalStrut(8))
+            it.alignmentX = Component.LEFT_ALIGNMENT
+            contentPanel.add(it)
+        }
+
+        contentPanel.add(Box.createVerticalStrut(10))
 
         val coordinateMode = src.subArtifactCoordinates.isNotEmpty()
         val selectable = if (coordinateMode) {
@@ -299,20 +369,20 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         val artifactSelector: JComboBox<String>? =
             if (selectable.isNotEmpty()) {
                 JComboBox(selectable.toTypedArray()).apply {
+                    // REDUCED: Lower minimum for more shrinking
+                    minimumSize = Dimension(80, 32) // Was 150
                     maximumSize = Dimension(Int.MAX_VALUE, 32)
-                    alignmentX = Component.LEFT_ALIGNMENT
                     if (selectable.contains("dev.frozenmilk.dairy:Core")) selectedItem = "dev.frozenmilk.dairy:Core"
                     if (selectable.contains("dev.nextftc:ftc")) selectedItem = "dev.nextftc:ftc"
                     if (selectable.contains("fullpanels")) selectedItem = "fullpanels"
                 }
             } else null
 
-        val card = createCard()
-
         val versionSelector = JComboBox<String>().apply {
+            // REDUCED: Lower minimum for more shrinking
+            minimumSize = Dimension(60, 32) // Was 100
             maximumSize = Dimension(Int.MAX_VALUE, 32)
             addItem("Loading...")
-            alignmentX = Component.LEFT_ALIGNMENT
         }
 
         fun loadVersions(selection: String) {
@@ -351,7 +421,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         }
 
         val installButton = createButton("Install", primaryColor).apply {
-            alignmentX = Component.LEFT_ALIGNMENT
             addActionListener {
                 val selVersion = versionSelector.selectedItem?.toString() ?: return@addActionListener
                 if (!selVersion.contains(".")) return@addActionListener
@@ -373,40 +442,69 @@ class FTCLibPanel(private val project: Project) : JPanel() {
             }
         }
 
-        val content = Box.createVerticalBox()
-        content.alignmentX = Component.LEFT_ALIGNMENT
-        content.add(header)
-        content.add(Box.createVerticalStrut(6))
-        content.add(descComponent)
-
-        createIncompatibilitiesRow(name, installedPrefixes)?.let {
-            content.add(Box.createVerticalStrut(8))
-            content.add(it)
-        }
-
-        createSuggestionsRow(name, installedPrefixes)?.let {
-            content.add(Box.createVerticalStrut(8))
-            content.add(it)
-        }
-
-        content.add(Box.createVerticalStrut(10))
         if (artifactSelector != null) {
-            content.add(createRow("Module:", artifactSelector))
-            content.add(Box.createVerticalStrut(8))
+            // FIXED: Use BorderLayout for module row to force proper sizing
+            val moduleRow = JPanel(BorderLayout(6, 0)).apply {
+                background = cardBackground
+                val labelPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+                    background = cardBackground
+                    add(JLabel("Module:").apply { font = font.deriveFont(Font.BOLD, 12f) })
+                }
+                add(labelPanel, BorderLayout.WEST)
+                add(artifactSelector, BorderLayout.CENTER)
+            }
+            moduleRow.alignmentX = Component.LEFT_ALIGNMENT
+            moduleRow.maximumSize = Dimension(Int.MAX_VALUE, 32)
+            contentPanel.add(moduleRow)
+            contentPanel.add(Box.createVerticalStrut(8))
         }
-        content.add(createRow("Version:", versionSelector, installButton))
 
-        card.add(content)
+        // FIXED: Use BorderLayout for version row to force proper sizing
+        val versionRow = JPanel(BorderLayout(6, 0)).apply {
+            background = cardBackground
+            val leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+                background = cardBackground
+                add(JLabel("Version:").apply { font = font.deriveFont(Font.BOLD, 12f) })
+            }
+            add(leftPanel, BorderLayout.WEST)
+
+            val centerPanel = JPanel(BorderLayout(6, 0)).apply {
+                background = cardBackground
+                add(versionSelector, BorderLayout.CENTER)
+                add(installButton, BorderLayout.EAST)
+            }
+            add(centerPanel, BorderLayout.CENTER)
+        }
+        versionRow.alignmentX = Component.LEFT_ALIGNMENT
+        versionRow.maximumSize = Dimension(Int.MAX_VALUE, 32)
+        contentPanel.add(versionRow)
+
+        card.add(contentPanel, BorderLayout.CENTER)
         return card
     }
 
     private fun makeInstalledCard(name: String, src: LibrarySource, currentVersion: String?, parentSuite: String? = null): JPanel {
-        val card = createCard()
+        val card = JPanel().apply {
+            layout = BorderLayout(12, 12)
+            background = cardBackground
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(borderColor),
+                EmptyBorder(14, 14, 14, 14)
+            )
+        }
+
+        val contentPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            background = cardBackground
+            isOpaque = false
+        }
 
         val header = JLabel(name).apply {
             font = font.deriveFont(Font.BOLD, 14f)
             alignmentX = Component.LEFT_ALIGNMENT
         }
+        contentPanel.add(header)
+        contentPanel.add(Box.createVerticalStrut(4))
 
         val versionBadge = JLabel(" v$currentVersion ").apply {
             font = font.deriveFont(Font.BOLD, 11f)
@@ -416,12 +514,31 @@ class FTCLibPanel(private val project: Project) : JPanel() {
             border = EmptyBorder(2, 6, 2, 6)
             alignmentX = Component.LEFT_ALIGNMENT
         }
+        contentPanel.add(versionBadge)
+        contentPanel.add(Box.createVerticalStrut(8))
 
         val descComponent = createDescription(src.description)
+        descComponent.alignmentX = Component.LEFT_ALIGNMENT
+        contentPanel.add(descComponent)
 
         val installedPrefixes = GradleInserter.getInstalledDependencies(project)
             .map { it.substringBeforeLast(":") }
             .toSet()
+
+        val checkName = parentSuite ?: name
+        createIncompatibilitiesRow(checkName, installedPrefixes)?.let {
+            contentPanel.add(Box.createVerticalStrut(8))
+            it.alignmentX = Component.LEFT_ALIGNMENT
+            contentPanel.add(it)
+        }
+
+        createSuggestionsRow(checkName, installedPrefixes)?.let {
+            contentPanel.add(Box.createVerticalStrut(8))
+            it.alignmentX = Component.LEFT_ALIGNMENT
+            contentPanel.add(it)
+        }
+
+        contentPanel.add(Box.createVerticalStrut(12))
 
         val updateButton = createButton("Update", warningColor)
         val deleteButton = createButton("Remove", dangerColor)
@@ -431,7 +548,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
                 val versions = VersionFetcher.fetchVersions(src)
                 if (versions.isNotEmpty()) {
                     val latest = versions.last()
-
                     if (latest != currentVersion) {
                         SwingUtilities.invokeLater {
                             hasUpdatesAvailable = true
@@ -447,7 +563,7 @@ class FTCLibPanel(private val project: Project) : JPanel() {
                     }
                 }
             } catch (e: Exception) {
-                // Silent fail for background check
+                // Silent fail
             }
         }.start()
 
@@ -494,30 +610,15 @@ class FTCLibPanel(private val project: Project) : JPanel() {
             }
         }
 
-        val buttons = createRow(updateButton, deleteButton)
-
-        val content = Box.createVerticalBox()
-        content.add(header)
-        content.add(Box.createVerticalStrut(4))
-        content.add(versionBadge)
-        content.add(Box.createVerticalStrut(8))
-        content.add(descComponent)
-
-        val checkName = parentSuite ?: name
-        createIncompatibilitiesRow(checkName, installedPrefixes)?.let {
-            content.add(Box.createVerticalStrut(8))
-            content.add(it)
+        val buttonRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+            background = cardBackground
+            add(updateButton)
+            add(deleteButton)
         }
+        buttonRow.alignmentX = Component.LEFT_ALIGNMENT
+        contentPanel.add(buttonRow)
 
-        createSuggestionsRow(checkName, installedPrefixes)?.let {
-            content.add(Box.createVerticalStrut(8))
-            content.add(it)
-        }
-
-        content.add(Box.createVerticalStrut(12))
-        content.add(buttons)
-
-        card.add(content)
+        card.add(contentPanel, BorderLayout.CENTER)
         return card
     }
 
@@ -597,16 +698,15 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         val items = (staticItems + dynamic)
         if (items.isEmpty()) return null
 
-        val row = JPanel()
-        row.layout = BoxLayout(row, BoxLayout.X_AXIS)
-        row.background = cardBackground
+        val row = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+            background = cardBackground
+        }
 
-        val lbl = JLabel("Suggested:")
-        lbl.font = lbl.font.deriveFont(Font.BOLD, 12f)
-        row.add(lbl)
-        row.add(Box.createHorizontalStrut(8))
+        row.add(JLabel("Suggested:").apply {
+            font = font.deriveFont(Font.BOLD, 12f)
+        })
 
-        items.forEachIndexed { idx, (name, src) ->
+        items.forEach { (name, src) ->
             val btn = JButton(name).apply {
                 isFocusPainted = false
                 font = font.deriveFont(11f).deriveFont(Font.BOLD)
@@ -654,9 +754,8 @@ class FTCLibPanel(private val project: Project) : JPanel() {
                 }
             }
             row.add(btn)
-            if (idx != items.lastIndex) row.add(Box.createHorizontalStrut(6))
         }
-        row.alignmentX = Component.LEFT_ALIGNMENT
+
         return row
     }
 
@@ -700,23 +799,19 @@ class FTCLibPanel(private val project: Project) : JPanel() {
         val conflicts = getIncompatibilitiesFor(forName, installedPrefixes)
         if (conflicts.isEmpty()) return null
 
-        val panel = Box.createVerticalBox()
-        panel.alignmentX = Component.LEFT_ALIGNMENT
-
-        val headerRow = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.X_AXIS)
+        val panel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
             background = cardBackground
+            isOpaque = false
+        }
 
-            val warningIcon = JLabel("⚠️")
-            warningIcon.font = warningIcon.font.deriveFont(14f)
-
-            val lbl = JLabel(" Incompatible:")
-            lbl.font = lbl.font.deriveFont(Font.BOLD, 12f)
-            lbl.foreground = dangerColor
-
-            add(warningIcon)
-            add(lbl)
-            alignmentX = Component.LEFT_ALIGNMENT
+        val headerRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+            background = cardBackground
+            add(JLabel("⚠️").apply { font = font.deriveFont(14f) })
+            add(JLabel(" Incompatible:").apply {
+                font = font.deriveFont(Font.BOLD, 12f)
+                foreground = dangerColor
+            })
         }
         panel.add(headerRow)
         panel.add(Box.createVerticalStrut(6))
@@ -729,22 +824,18 @@ class FTCLibPanel(private val project: Project) : JPanel() {
                     BorderFactory.createLineBorder(warningColor, 2),
                     EmptyBorder(8, 10, 8, 10)
                 )
-                alignmentX = Component.LEFT_ALIGNMENT
             }
 
-            val conflictLabel = JLabel("⚠ ${conflict.reason}")
-            conflictLabel.font = conflictLabel.font.deriveFont(Font.BOLD, 11f)
-            conflictLabel.foreground = JBColor(Color(0x856404), Color(0xFFD700))
-            conflictLabel.alignmentX = Component.LEFT_ALIGNMENT
+            conflictPanel.add(JLabel("⚠ ${conflict.reason}").apply {
+                font = font.deriveFont(Font.BOLD, 11f)
+                foreground = JBColor(Color(0x856404), Color(0xFFD700))
+            })
 
-            val detailLabel = JLabel("Conflicts with: ${conflict.conflictingLib}")
-            detailLabel.font = detailLabel.font.deriveFont(11f)
-            detailLabel.foreground = JBColor.GRAY
-            detailLabel.alignmentX = Component.LEFT_ALIGNMENT
-
-            conflictPanel.add(conflictLabel)
             conflictPanel.add(Box.createVerticalStrut(4))
-            conflictPanel.add(detailLabel)
+            conflictPanel.add(JLabel("Conflicts with: ${conflict.conflictingLib}").apply {
+                font = font.deriveFont(11f)
+                foreground = JBColor.GRAY
+            })
 
             if (conflict.suggestedFix != null) {
                 conflictPanel.add(Box.createVerticalStrut(6))
@@ -758,7 +849,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
                         EmptyBorder(4, 10, 4, 10)
                     )
                     cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-                    alignmentX = Component.LEFT_ALIGNMENT
                     addActionListener {
                         isEnabled = false
                         text = "Installing..."
@@ -767,7 +857,6 @@ class FTCLibPanel(private val project: Project) : JPanel() {
                                 val slothDashSrc = LibraryRegistry.LIBRARIES[conflict.suggestedFix]
                                 if (slothDashSrc != null) {
                                     GradleInserter.deleteDependency(project, "com.github.acmerobotics:ftc-dashboard")
-
                                     val versions = VersionFetcher.fetchVersions(slothDashSrc)
                                     val latest = versions.lastOrNull()
                                     if (latest != null) {
@@ -801,11 +890,10 @@ class FTCLibPanel(private val project: Project) : JPanel() {
                 conflictPanel.add(fixButton)
             } else {
                 conflictPanel.add(Box.createVerticalStrut(4))
-                val noFixLabel = JLabel("No automatic fix available. Manual resolution required.")
-                noFixLabel.font = noFixLabel.font.deriveFont(Font.ITALIC, 10f)
-                noFixLabel.foreground = JBColor.GRAY
-                noFixLabel.alignmentX = Component.LEFT_ALIGNMENT
-                conflictPanel.add(noFixLabel)
+                conflictPanel.add(JLabel("No automatic fix available. Manual resolution required.").apply {
+                    font = font.deriveFont(Font.ITALIC, 10f)
+                    foreground = JBColor.GRAY
+                })
             }
 
             panel.add(conflictPanel)
@@ -818,6 +906,7 @@ class FTCLibPanel(private val project: Project) : JPanel() {
     private fun createDescription(text: String): JComponent {
         val urlRegex = Regex("""https?://\S+""")
         val urls = urlRegex.findAll(text).map { it.value.removeSuffix(".") }.toList()
+
         val area = JTextArea(text).apply {
             lineWrap = true
             wrapStyleWord = true
@@ -825,42 +914,61 @@ class FTCLibPanel(private val project: Project) : JPanel() {
             isOpaque = false
             border = null
             font = font.deriveFont(12f)
-            alignmentX = Component.LEFT_ALIGNMENT
+            // REDUCED: Lower minimum for more shrinking
+            minimumSize = Dimension(50, 20) // Was 100
         }
-        if (urls.isEmpty()) return area
 
-        val panel = Box.createVerticalBox()
-        panel.alignmentX = Component.LEFT_ALIGNMENT
-        panel.add(area)
+        // FIXED: Override getPreferredSize to respect parent width with lower minimum
+        val wrappedArea = object : JPanel() {
+            init {
+                layout = BorderLayout()
+                background = cardBackground
+                isOpaque = false
+                add(area, BorderLayout.CENTER)
+            }
+
+            override fun getPreferredSize(): Dimension {
+                val parentWidth = parent?.width ?: 400
+                val effectiveWidth = maxOf(50, parentWidth - 40) // REDUCED from 100
+                area.size = Dimension(effectiveWidth, Short.MAX_VALUE.toInt())
+                val pref = area.preferredSize
+                return Dimension(effectiveWidth, pref.height)
+            }
+        }
+
+        if (urls.isEmpty()) return wrappedArea
+
+        val panel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            background = cardBackground
+            isOpaque = false
+        }
+
+        wrappedArea.alignmentX = Component.LEFT_ALIGNMENT
+        panel.add(wrappedArea)
         panel.add(Box.createVerticalStrut(6))
 
-        val linksRow = Box.createHorizontalBox()
-        linksRow.alignmentX = Component.LEFT_ALIGNMENT
+        val linksRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+            background = cardBackground
+            maximumSize = Dimension(Int.MAX_VALUE, 30)
+        }
+
         urls.forEachIndexed { i, u ->
             val btn = JButton(if (i == 0) "Docs" else "Link ${i + 1}").apply {
                 isFocusPainted = false
                 font = font.deriveFont(11f)
                 cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
                 addActionListener {
-                    try { if (Desktop.isDesktopSupported()) Desktop.getDesktop().browse(URI(u)) } catch (_: Exception) {}
+                    try {
+                        if (Desktop.isDesktopSupported()) Desktop.getDesktop().browse(URI(u))
+                    } catch (_: Exception) {}
                 }
             }
             linksRow.add(btn)
-            linksRow.add(Box.createHorizontalStrut(6))
         }
-        panel.add(linksRow)
-        return panel
-    }
 
-    private fun createCard(): JPanel {
-        val panel = JPanel()
-        panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
-        panel.background = cardBackground
-        panel.border = BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(borderColor),
-            EmptyBorder(14, 14, 14, 14)
-        )
-        panel.alignmentX = Component.LEFT_ALIGNMENT
+        linksRow.alignmentX = Component.LEFT_ALIGNMENT
+        panel.add(linksRow)
         return panel
     }
 
@@ -875,41 +983,14 @@ class FTCLibPanel(private val project: Project) : JPanel() {
                 EmptyBorder(6, 12, 6, 12)
             )
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            minimumSize = Dimension(60, 32) // REDUCED from 80
         }
-    }
-
-    private fun createRow(vararg components: Component): JPanel {
-        val panel = JPanel()
-        panel.layout = BoxLayout(panel, BoxLayout.X_AXIS)
-        panel.background = cardBackground
-        components.forEachIndexed { i, c ->
-            panel.add(c)
-            if (i != components.lastIndex) panel.add(Box.createHorizontalStrut(8))
-        }
-        panel.alignmentX = Component.LEFT_ALIGNMENT
-        return panel
-    }
-
-    private fun createRow(label: String, vararg components: Component): JPanel {
-        val panel = JPanel()
-        panel.layout = BoxLayout(panel, BoxLayout.X_AXIS)
-        panel.background = cardBackground
-        val lbl = JLabel(label)
-        lbl.font = lbl.font.deriveFont(Font.BOLD, 12f)
-        panel.add(lbl)
-        panel.add(Box.createHorizontalStrut(6))
-        components.forEachIndexed { i, c ->
-            panel.add(c)
-            if (i != components.lastIndex) panel.add(Box.createHorizontalStrut(8))
-        }
-        panel.alignmentX = Component.LEFT_ALIGNMENT
-        return panel
     }
 
     private fun createSectionHeader(text: String, count: Int): JPanel {
         val panel = JPanel(BorderLayout())
         panel.background = JBColor.background()
-        val title = JLabel("$text")
+        val title = JLabel(text)
         title.font = title.font.deriveFont(Font.BOLD, 16f)
         val badge = JLabel(" $count ")
         badge.font = badge.font.deriveFont(Font.BOLD, 11f)
