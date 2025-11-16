@@ -156,7 +156,8 @@ object GradleInserter {
             val managedRepos = setOf(
                 "https://jitpack.io",
                 "https://repo.dairy.foundation/releases",
-                "https://repo.dairy.foundation/snapshots"
+                "https://repo.dairy.foundation/snapshots",
+                "https://mymaven.bylazar.com/releases"
             )
 
             val startIdx = contentBefore.indexOf("repositories {")

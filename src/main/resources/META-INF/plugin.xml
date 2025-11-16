@@ -8,13 +8,21 @@
     <name>LibraryManager</name>
 
     <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
-    <vendor url="https://www.yourcompany.com">YourCompany</vendor>
+    <vendor email="cohenphill@outlook.com">Cohen</vendor>
 
     <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
     <description><![CDATA[
-        Enter short description for your plugin here.<br>
-        <em>most HTML tags may be used</em>
+        <b>Manage FTC libraries and vendor dependencies from a dedicated tool window.</b><br><br>
+        LibraryManager helps FIRST Tech Challenge teams discover, add, and update dependencies (e.g., FTCLib, Road Runner, vendor SDKs) without manually editing Gradle files.
+        <ul>
+            <li>Browse available libraries and versions</li>
+            <li>Add, update, or remove dependencies with one click</li>
+            <li>Trigger Gradle sync and project refresh automatically</li>
+            <li>Per-project configuration and version pinning</li>
+            <li>Quick links to documentation and release notes</li>
+        </ul>
+        Works with Gradle-based FTC projects. Open via: View → Tool Windows → FTCLibManager.
     ]]></description>
 
 
